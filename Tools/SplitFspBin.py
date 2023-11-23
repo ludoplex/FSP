@@ -46,10 +46,10 @@ class c_uint24(Structure):
         return self.get_value()
 
     def set_value(self, val):
-        self.Data[0:3] = Val2Bytes(val, 3)
+        self.Data[:3] = Val2Bytes(val, 3)
 
     def get_value(self):
-        return Bytes2Val(self.Data[0:3])
+        return Bytes2Val(self.Data[:3])
 
     value = property(get_value, set_value)
 
@@ -346,37 +346,31 @@ def Bytes2Val (bytes):
 def Val2Bytes (value, blen):
     return [(value>>(i*8) & 0xff) for i in range(blen)]
 
-def IsIntegerType (val):
-    if sys.version_info[0] < 3:
-        if type(val) in (int, long):
-            return True
-    else:
-        if type(val) is int:
-            return True
-    return False
+def IsIntegerType(val):
+    return (
+        sys.version_info[0] < 3
+        and type(val) in (int, long)
+        or sys.version_info[0] >= 3
+        and type(val) is int
+    )
 
-def IsStrType (val):
-    if sys.version_info[0] < 3:
-        if type(val) is str:
-            return True
-    else:
-        if type(val) is bytes:
-            return True
-    return False
+def IsStrType(val):
+    return (
+        sys.version_info[0] < 3
+        and type(val) is str
+        or sys.version_info[0] >= 3
+        and type(val) is bytes
+    )
 
-def HandleNameStr (val):
-    if sys.version_info[0] < 3:
-        rep = "0x%X ('%s')" % (Bytes2Val (bytearray (val)), val)
-    else:
-        rep = "0x%X ('%s')" % (Bytes2Val (bytearray (val)), str (val, 'utf-8'))
-    return rep
+def HandleNameStr(val):
+    return (
+        "0x%X ('%s')" % (Bytes2Val(bytearray(val)), val)
+        if sys.version_info[0] < 3
+        else "0x%X ('%s')" % (Bytes2Val(bytearray(val)), str(val, 'utf-8'))
+    )
 
-def OutputStruct (obj, indent = 0, plen = 0):
-    if indent:
-        body = ''
-    else:
-        body = ('  ' * indent + '<%s>:\n') % obj.__class__.__name__
-
+def OutputStruct(obj, indent = 0, plen = 0):
+    body = '' if indent else ('  ' * indent + '<%s>:\n') % obj.__class__.__name__
     if plen == 0:
         plen = sizeof(obj)
 
@@ -419,14 +413,11 @@ def OutputStruct (obj, indent = 0, plen = 0):
                 rep = '0x%X' % val.get_value()
             elif 'c_ubyte_Array' in str(type(val)):
                 if sizeof(val) == 16:
-                    if sys.version_info[0] < 3:
-                        rep = str(bytearray(val))
-                    else:
-                        rep = bytes(val)
+                    rep = str(bytearray(val)) if sys.version_info[0] < 3 else bytes(val)
                     rep = str(uuid.UUID(bytes_le = rep)).upper()
                 else:
                     res = ['0x%02X'%i for i in bytearray(val)]
-                    rep = '[%s]' % (','.join(res))
+                    rep = f"[{','.join(res)}]"
             else:
                 rep = str(val)
             plen -= sizeof(field[1])
@@ -438,13 +429,13 @@ def OutputStruct (obj, indent = 0, plen = 0):
 class Section:
     def __init__(self, offset, secdata):
         self.SecHdr   = EFI_COMMON_SECTION_HEADER.from_buffer (secdata, 0)
-        self.SecData  = secdata[0:int(self.SecHdr.Size)]
+        self.SecData = secdata[:int(self.SecHdr.Size)]
         self.Offset   = offset
 
 class FirmwareFile:
     def __init__(self, offset, filedata):
         self.FfsHdr   = EFI_FFS_FILE_HEADER.from_buffer (filedata, 0)
-        self.FfsData  = filedata[0:int(self.FfsHdr.Size)]
+        self.FfsData = filedata[:int(self.FfsHdr.Size)]
         self.Offset   = offset
         self.SecList  = []
 
@@ -462,7 +453,7 @@ class FirmwareFile:
 class FirmwareVolume:
     def __init__(self, offset, fvdata):
         self.FvHdr    = EFI_FIRMWARE_VOLUME_HEADER.from_buffer (fvdata, 0)
-        self.FvData   = fvdata[0 : self.FvHdr.FvLength]
+        self.FvData = fvdata[:self.FvHdr.FvLength]
         self.Offset   = offset
         if self.FvHdr.ExtHeaderOffset > 0:
             self.FvExtHdr = EFI_FIRMWARE_VOLUME_EXT_HEADER.from_buffer (self.FvData, self.FvHdr.ExtHeaderOffset)
@@ -554,9 +545,8 @@ class FirmwareDevice:
         self.FspList = []
         self.FdFile = fdfile
         self.Offset = 0
-        hfsp = open (self.FdFile, 'rb')
-        self.FdData = bytearray(hfsp.read())
-        hfsp.close()
+        with open (self.FdFile, 'rb') as hfsp:
+            self.FdData = bytearray(hfsp.read())
 
     def ParseFd(self):
         offset = 0
@@ -564,7 +554,7 @@ class FirmwareDevice:
         self.FvList  = []
         while offset < (fdsize - sizeof (EFI_FIRMWARE_VOLUME_HEADER)):
             fvh = EFI_FIRMWARE_VOLUME_HEADER.from_buffer (self.FdData, offset)
-            if b'_FVH' != fvh.Signature:
+            if fvh.Signature != b'_FVH':
                 raise Exception("ERROR: Invalid FV header !")
             fv = FirmwareVolume (offset, self.FdData[offset:offset + fvh.FvLength])
             fv.ParseFv ()
@@ -601,7 +591,7 @@ class FirmwareDevice:
                 fspoffset = fv.Offset
                 offset    = fspoffset + fihoffset
                 fih = FSP_INFORMATION_HEADER.from_buffer (self.FdData, offset)
-                if b'FSPH' != fih.Signature:
+                if fih.Signature != b'FSPH':
                     continue
 
                 offset += fih.HeaderLength
@@ -609,7 +599,7 @@ class FirmwareDevice:
                 plist  = []
                 while True:
                     fch = FSP_COMMON_HEADER.from_buffer (self.FdData, offset)
-                    if b'FSPP' != fch.Signature:
+                    if fch.Signature != b'FSPP':
                         offset += fch.HeaderLength
                         offset = AlignPtr(offset, 4)
                     else:
@@ -675,7 +665,7 @@ class PeTeImage:
 
         alignment = 4
         offset = roffset
-        while offset < roffset + rsize:
+        while offset < offset + rsize:
             offset = AlignPtr(offset, 4)
             blkhdr = PE_RELOC_BLOCK_HEADER.from_buffer(self.Data, offset)
             offset += sizeof(blkhdr)
@@ -688,7 +678,7 @@ class PeTeImage:
                 rtype = each >> 12
                 if rtype == 0: # IMAGE_REL_BASED_ABSOLUTE:
                     continue
-                if ((rtype != 3) and (rtype != 10)): # IMAGE_REL_BASED_HIGHLOW and IMAGE_REL_BASED_DIR64
+                if rtype not in [3, 10]: # IMAGE_REL_BASED_HIGHLOW and IMAGE_REL_BASED_DIR64
                     raise Exception("ERROR: Unsupported relocation type %d!" % rtype)
                 # Calculate the offset of the relocation
                 aoff  = blkhdr.PageRVA + roff
@@ -736,7 +726,7 @@ class PeTeImage:
 
         return count
 
-def ShowFspInfo (fspfile):
+def ShowFspInfo(fspfile):
     fd = FirmwareDevice(0, fspfile)
     fd.ParseFd  ()
     fd.ParseFsp ()
@@ -747,52 +737,47 @@ def ShowFspInfo (fspfile):
         if not name:
             name = '\xff' * 16
         else:
-            if sys.version_info[0] < 3:
-                name = str(bytearray(name))
-            else:
-                name = bytes(name)
+            name = str(bytearray(name)) if sys.version_info[0] < 3 else bytes(name)
         guid = uuid.UUID(bytes_le = name)
         print ("FV%d:" % idx)
-        print ("  GUID   : %s" % str(guid).upper())
+        print(f"  GUID   : {str(guid).upper()}")
         print ("  Offset : 0x%08X" %  fv.Offset)
         print ("  Length : 0x%08X" % fv.FvHdr.FvLength)
     print ("\n")
 
     for fsp in fd.FspList:
         fvlist = map(lambda x : 'FV%d' % x, fsp.FvIdxList)
-        print ("FSP_%s contains %s" % (fsp.Type, ','.join(fvlist)))
-        print ("%s" % (OutputStruct(fsp.Fih, 0, fsp.Fih.HeaderLength)))
+        print(f"FSP_{fsp.Type} contains {','.join(fvlist)}")
+        print(f"{OutputStruct(fsp.Fih, 0, fsp.Fih.HeaderLength)}")
 
-def GenFspHdr (fspfile, outdir, hfile):
+def GenFspHdr(fspfile, outdir, hfile):
     fd = FirmwareDevice(0, fspfile)
     fd.ParseFd  ()
     fd.ParseFsp ()
 
     if not hfile:
-        hfile = os.path.splitext(os.path.basename(fspfile))[0] + '.h'
+        hfile = f'{os.path.splitext(os.path.basename(fspfile))[0]}.h'
     fspname, ext = os.path.splitext(os.path.basename(hfile))
     filename = os.path.join(outdir, fspname + ext)
-    hfsp   = open(filename, 'w')
-    hfsp.write ('%s\n\n' % CopyRightHeaderFile)
+    with open(filename, 'w') as hfsp:
+        hfsp.write ('%s\n\n' % CopyRightHeaderFile)
 
-    firstfv = True
-    for fsp in fd.FspList:
-        fih = fsp.Fih
-        if firstfv:
-            if sys.version_info[0] < 3:
-                hfsp.write("#define  FSP_IMAGE_ID    0x%016X    /* '%s' */\n" % (Bytes2Val(bytearray(fih.ImageId)), fih.ImageId))
-            else:
-                hfsp.write("#define  FSP_IMAGE_ID    0x%016X    /* '%s' */\n" % (Bytes2Val(bytearray(fih.ImageId)), str (fih.ImageId, 'utf-8')))
-            hfsp.write("#define  FSP_IMAGE_REV   0x%08X \n\n" % fih.ImageRevision)
-            firstfv = False
-        fv = fd.FvList[fsp.FvIdxList[0]]
-        hfsp.write ('#define  FSP%s_BASE       0x%08X\n'   % (fsp.Type, fih.ImageBase))
-        hfsp.write ('#define  FSP%s_OFFSET     0x%08X\n'   % (fsp.Type, fv.Offset))
-        hfsp.write ('#define  FSP%s_LENGTH     0x%08X\n\n' % (fsp.Type, fih.ImageSize))
+        firstfv = True
+        for fsp in fd.FspList:
+            fih = fsp.Fih
+            if firstfv:
+                if sys.version_info[0] < 3:
+                    hfsp.write("#define  FSP_IMAGE_ID    0x%016X    /* '%s' */\n" % (Bytes2Val(bytearray(fih.ImageId)), fih.ImageId))
+                else:
+                    hfsp.write("#define  FSP_IMAGE_ID    0x%016X    /* '%s' */\n" % (Bytes2Val(bytearray(fih.ImageId)), str (fih.ImageId, 'utf-8')))
+                hfsp.write("#define  FSP_IMAGE_REV   0x%08X \n\n" % fih.ImageRevision)
+                firstfv = False
+            fv = fd.FvList[fsp.FvIdxList[0]]
+            hfsp.write ('#define  FSP%s_BASE       0x%08X\n'   % (fsp.Type, fih.ImageBase))
+            hfsp.write ('#define  FSP%s_OFFSET     0x%08X\n'   % (fsp.Type, fv.Offset))
+            hfsp.write ('#define  FSP%s_LENGTH     0x%08X\n\n' % (fsp.Type, fih.ImageSize))
 
-    hfsp.close()
-
-def SplitFspBin (fspfile, outdir, nametemplate):
+def SplitFspBin(fspfile, outdir, nametemplate):
     fd = FirmwareDevice(0, fspfile)
     fd.ParseFd  ()
     fd.ParseFsp ()
@@ -804,13 +789,12 @@ def SplitFspBin (fspfile, outdir, nametemplate):
         if not nametemplate:
             nametemplate = fspfile
         fspname, ext = os.path.splitext(os.path.basename(nametemplate))
-        filename = os.path.join(outdir, fspname + '_' + fsp.Type + ext)
-        hfsp = open(filename, 'wb')
-        print ("Create FSP component file '%s'" % filename)
-        for fvidx in fsp.FvIdxList:
-            fv = fd.FvList[fvidx]
-            hfsp.write(fv.FvData)
-        hfsp.close()
+        filename = os.path.join(outdir, f'{fspname}_{fsp.Type}{ext}')
+        with open(filename, 'wb') as hfsp:
+            print(f"Create FSP component file '{filename}'")
+            for fvidx in fsp.FvIdxList:
+                fv = fd.FvList[fvidx]
+                hfsp.write(fv.FvData)
 
 def GetImageFromFv (fd, parentfvoffset, fv, imglist):
     for ffs in fv.FfsList:
@@ -819,7 +803,7 @@ def GetImageFromFv (fd, parentfvoffset, fv, imglist):
                 offset = fd.Offset + parentfvoffset + fv.Offset + ffs.Offset + sec.Offset + sizeof(sec.SecHdr)
                 imglist.append ((offset, len(sec.SecData) - sizeof(sec.SecHdr)))
 
-def RebaseFspBin (FspBinary, FspComponent, FspBase, OutputDir, OutputFile):
+def RebaseFspBin(FspBinary, FspComponent, FspBase, OutputDir, OutputFile):
     fd = FirmwareDevice(0, FspBinary)
     fd.ParseFd  ()
     fd.ParseFsp ()
@@ -851,10 +835,7 @@ def RebaseFspBin (FspBinary, FspComponent, FspBase, OutputDir, OutputFile):
             return
 
         fspbase = baselist[idx]
-        if fspbase.startswith('0x'):
-            newbase = int(fspbase, 16)
-        else:
-            newbase = int(fspbase)
+        newbase = int(fspbase, 16) if fspbase.startswith('0x') else int(fspbase)
         oldbase = fsp.Fih.ImageBase
         delta = newbase - oldbase
         print ("Rebase FSP-%c from 0x%08X to 0x%08X:" % (ftype.upper(),oldbase,newbase))
@@ -890,11 +871,10 @@ def RebaseFspBin (FspBinary, FspComponent, FspBase, OutputDir, OutputFile):
 
     fspname, ext = os.path.splitext(os.path.basename(OutputFile))
     filename = os.path.join(OutputDir, fspname + ext)
-    fd = open(filename, "wb")
-    fd.write(newfspbin)
-    fd.close()
+    with open(filename, "wb") as fd:
+        fd.write(newfspbin)
 
-def main ():
+def main():
     parser     = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(title='commands', dest="which")
 
@@ -925,9 +905,11 @@ def main ():
     args = parser.parse_args()
     if args.which in ['rebase', 'split', 'genhdr', 'info']:
         if not os.path.exists(args.FspBinary):
-            raise Exception ("ERROR: Could not locate FSP binary file '%s' !" % args.FspBinary)
+            raise Exception(
+                f"ERROR: Could not locate FSP binary file '{args.FspBinary}' !"
+            )
         if hasattr(args, 'OutputDir') and not os.path.exists(args.OutputDir):
-            raise Exception ("ERROR: Invalid output directory '%s' !" % args.OutputDir)
+            raise Exception(f"ERROR: Invalid output directory '{args.OutputDir}' !")
 
     if args.which == 'rebase':
         RebaseFspBin (args.FspBinary, args.FspComponent, args.FspBase, args.OutputDir, args.OutputFile)
